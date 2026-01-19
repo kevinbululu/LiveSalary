@@ -19,13 +19,13 @@ enum SalaryStatus: String {
     var displayName: String {
         switch self {
         case .noSet:
-            return "noSet"
+            return "● noSet"
         case .stop:
-            return "Rest"
+            return "● Rest"
         case .working:
-            return "Working"
+            return "◉ Working"
         case .paused:
-            return "Paused"
+            return "● Paused"
         }
     }
 }
@@ -476,7 +476,7 @@ struct InfoView: View {
                     HStack(spacing: 8) {
                         Text("Status")
                             .foregroundStyle(.secondary)
-                        StatusBadge(status: snapshot.status)
+                        StatusBadgeView(status: snapshot.status)
                         Spacer(minLength: 0)
                     }
                     Text(todayDisplay)
@@ -770,6 +770,8 @@ struct MenuBarPopoverView: View {
     var body: some View {
         PopoverContentView(
             snapshot: snapshot,
+            monthSalary: store.monthSalary,
+            refreshInterval: store.refreshInterval,
             settingsAction: showMainWindow,
             quitAction: { NSApp.terminate(nil) }
         )
@@ -805,6 +807,8 @@ struct MenuBarPopoverView: View {
 
 struct PopoverContentView: View {
     let snapshot: SalarySnapshot
+    let monthSalary: Double
+    let refreshInterval: Double
     let settingsAction: () -> Void
     let quitAction: () -> Void
 
@@ -812,46 +816,106 @@ struct PopoverContentView: View {
         snapshot.status == .noSet ? "noSet" : SalaryFormatting.money(snapshot.todayEarned)
     }
 
+    // Δ = (dailyPay / totalWorkSeconds) * refreshInterval; only shown in Working.
+    private var deltaText: String? {
+        guard snapshot.status == .working,
+              let workdayCount = snapshot.workdayCount,
+              workdayCount > 0,
+              let totalWorkHours = snapshot.totalWorkHours,
+              totalWorkHours > 0
+        else { return nil }
+        let dailyPay = monthSalary / Double(workdayCount)
+        let totalWorkSeconds = totalWorkHours * 3600.0
+        let perSecondRate = dailyPay / totalWorkSeconds
+        let delta = perSecondRate * refreshInterval
+        return String(
+            format: "+%@%.2f/%.1fs",
+            locale: SalaryFormatting.formatLocale,
+            SalaryFormatting.yenSymbol,
+            delta,
+            refreshInterval
+        )
+    }
+
+    private var workdaysValueText: String {
+        guard snapshot.status != .noSet else { return "--" }
+        return "\(snapshot.workdaysElapsed ?? 0) / \(snapshot.workdayCount ?? 0) Days"
+    }
+
+    private var hoursValueText: String {
+        guard snapshot.status != .noSet else { return "--" }
+        guard let done = snapshot.todayWorkedHours, let total = snapshot.totalWorkHours else { return "--" }
+        return String(format: "%.1f / %.1f Hours", locale: SalaryFormatting.formatLocale, done, total)
+    }
+
+    private var workdaysProgress: Double {
+        guard snapshot.status != .noSet,
+              let done = snapshot.workdaysElapsed,
+              let total = snapshot.workdayCount,
+              total > 0
+        else { return 0 }
+        return min(max(Double(done) / Double(total), 0), 1)
+    }
+
+    private var hoursProgress: Double {
+        guard snapshot.status != .noSet,
+              let done = snapshot.todayWorkedHours,
+              let total = snapshot.totalWorkHours,
+              total > 0
+        else { return 0 }
+        return min(max(done / total, 0), 1)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .center, spacing: 8) {
                 Text("LiveSalary")
-                    .font(.headline)
+                    .font(.title3.weight(.semibold))
                 Spacer(minLength: 8)
-                StatusBadge(status: snapshot.status)
+                StatusBadgeView(status: snapshot.status)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(todayDisplay)
-                    .font(.system(size: 28, weight: .semibold))
-                    .monospacedDigit()
-                if snapshot.status == .working {
-                    Text("Realtime")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Today")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Today")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(todayDisplay)
+                        .font(.system(size: 35, weight: .bold))
+                        .monospacedDigit()
+                    if let deltaText {
+                        DeltaPillView(deltaText: deltaText)
+                            .offset(y: -2)
+                    }
                 }
             }
 
-            Divider()
+            HStack(alignment: .top, spacing: 16) {
+                MetricProgressBlock(
+                    title: "Workdays",
+                    valueText: workdaysValueText,
+                    progress: workdaysProgress,
+                    isEnabled: snapshot.status != .noSet
+                )
+                MetricProgressBlock(
+                    title: "Hours Today",
+                    valueText: hoursValueText,
+                    progress: hoursProgress,
+                    isEnabled: snapshot.status != .noSet
+                )
+            }
 
-            KeyValueRow(key: "Month Accumulated", value: SalaryFormatting.money(snapshot.monthAccumulated))
-            KeyValueRow(
-                key: "Workdays",
-                value: SalaryFormatting.workdayCount(elapsed: snapshot.workdaysElapsed, total: snapshot.workdayCount)
-            )
-            KeyValueRow(
-                key: "Hours",
-                value: SalaryFormatting.hoursRatio(elapsed: snapshot.todayWorkedHours, total: snapshot.totalWorkHours)
-            )
+            VStack(alignment: .leading, spacing: 8) {
+                KeyValueRow(
+                    key: "Month Accumulated",
+                    value: SalaryFormatting.money(snapshot.monthAccumulated)
+                )
+                .font(.subheadline)
+                Divider()
+                    .opacity(0.4)
+            }
 
-            Divider()
-
-            HStack(spacing: 8) {
-                Spacer()
+            HStack(spacing: 12) {
                 Button("Settings...") {
                     settingsAction()
                 }
@@ -860,6 +924,7 @@ struct PopoverContentView: View {
                     quitAction()
                 }
                 .buttonStyle(.bordered)
+                Spacer(minLength: 0)
             }
         }
         .padding(16)
@@ -867,30 +932,85 @@ struct PopoverContentView: View {
     }
 }
 
-struct StatusBadge: View {
+struct StatusBadgeView: View {
     let status: SalaryStatus
 
-    private var colors: (foreground: Color, background: Color) {
+    private var foreground: Color {
         switch status {
         case .working:
-            return (.green, Color.green.opacity(0.18))
+            return .green
+        case .paused, .stop, .noSet:
+            return .secondary
+        }
+    }
+
+    private var background: Color {
+        switch status {
+        case .working:
+            return Color.green.opacity(0.14)
         case .paused:
-            return (.orange, Color.orange.opacity(0.18))
+            return Color.orange.opacity(0.12)
         case .stop:
-            return (.red, Color.red.opacity(0.18))
+            return Color.red.opacity(0.12)
         case .noSet:
-            return (.secondary, Color.secondary.opacity(0.16))
+            return Color.secondary.opacity(0.12)
         }
     }
 
     var body: some View {
         Text(status.displayName)
             .font(.caption.weight(.semibold))
-            .foregroundStyle(colors.foreground)
-            .padding(.horizontal, 8)
+            .foregroundStyle(foreground)
+            .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(colors.background)
+            .background(background)
             .clipShape(Capsule())
+    }
+}
+
+struct MetricProgressBlock: View {
+    let title: String
+    let valueText: String
+    let progress: Double
+    let isEnabled: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text(valueText)
+                .font(.body)
+                .monospacedDigit()
+            ProgressView(value: progress)
+                .progressViewStyle(.linear)
+                .tint(isEnabled ? .accentColor : .secondary)
+                .frame(height: 7)
+                .clipShape(Capsule())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(isEnabled ? 1.0 : 0.4)
+    }
+}
+
+struct DeltaPillView: View {
+    let deltaText: String
+
+    var body: some View {
+        Text(deltaText)
+            .font(.subheadline.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(
+                LinearGradient(
+                    colors: [
+                        Color.accentColor.opacity(0.85),
+                        Color.accentColor
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .padding(.horizontal, 6)
     }
 }
 
