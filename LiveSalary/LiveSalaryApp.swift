@@ -2,7 +2,7 @@
 //  LiveSalaryApp.swift
 //  LiveSalary
 //
-//  Created by Kevin on 2026/1/16.
+//  Created by jiquanbai on 2026/1/16.
 //
 
 import SwiftUI
